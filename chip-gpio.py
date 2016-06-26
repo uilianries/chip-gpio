@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 from enum import Enum
 from enum import IntEnum
 import os
@@ -5,8 +7,8 @@ import sys
 import argparse
 
 class Mode(Enum):
-    output = 'output'
-    input = 'input'
+    output = 'out'
+    input = 'in'
 
 class Level(IntEnum):
     low = 0
@@ -26,7 +28,7 @@ class Gpio(object):
         elif args.command == 'disable':
             self.__disable(args.pin)
         elif args.command == 'mode':
-            mode = Mode(args.mode)
+            mode = self.__str_to_mode(args.mode)
             self.__mode_validation(mode)
             self.__mode(args.pin, mode)
         elif args.command == 'write':
@@ -62,6 +64,10 @@ class Gpio(object):
         level_dict = {'low': Level.low, 'high': Level.high}
         return level_dict[str_level]
 
+    def __str_to_mode(self, str_mode: str):
+        mode_dict = {'input': Mode.input, 'output': Mode.output}
+        return mode_dict[str_mode]
+
     def __to_gpio(self, pin: int):
         return str(Gpio.__PIN_BASE + pin)
 
@@ -78,9 +84,9 @@ class Gpio(object):
     def __mode(self, pin: int, mode: Mode):
         gpio_dir = os.path.join(Gpio.__CLASS_DIR, 'gpio' + self.__to_gpio(pin))
         if not os.path.isdir(gpio_dir):
-            raise IOError("Pin {0} is not enabled".format(str(pin)))
+            raise IOError("Pin {0} is not enabled".format(str(self.__to_gpio(pin))))
         fd = open(os.path.join(gpio_dir, 'direction'), 'w')
-        fd.write(str(mode))
+        fd.write(str(mode.value))
 
     def __read(self, pin: int):
         gpio_dir = os.path.join(Gpio.__CLASS_DIR, 'gpio' + self.__to_gpio(pin))
