@@ -27,7 +27,7 @@ class CHIPServer:
         def client_done(task):
             del self.clients[task]
 
-        task.add_done_callback(client_done, client_writer)
+        task.add_done_callback(client_done)
 
     @asyncio.coroutine
     def _handle_client(self, client_reader, client_writer):
@@ -36,7 +36,10 @@ class CHIPServer:
             data = (yield from client_reader.readline()).decode("utf-8")
             if not data:
                 break
-            self.logger.info('Received data: ' + data)
+            try:
+                self.logger.info('Received data: ' + data)
+            except:
+                selg.logger.error("Could not log received message")
             self.__process_command(data, client_writer)
 
     def start(self, loop):
@@ -56,7 +59,7 @@ class CHIPServer:
     def __process_command(self, data, client_writer):
         try:
             json_data = json.loads(data)
-        except json.decoder.JSONDecodeError as error:
+        except:
             self.logger.error("Could not parse message")
             return
 
@@ -66,22 +69,25 @@ class CHIPServer:
             json_dict = json_data[0]
             command = json_dict['command']
             pin = json_dict['pin']
+            data = [{'command': 'enable', 'result': False}]
 
             if command == 'enable':
-                self.__enable(pin)
+                data[0]['result'] = self.__enable(pin)
             elif command == 'disable':
-                self.__disable(pin)
+                data[0]['result'] = self.__disable(pin)
             elif command == 'mode':
-                self.__mode(pin, json_dict['mode'])
+                data[0]['result'] = self.__mode(pin, json_dict['mode'])
             elif command == 'write':
-                self.__write(pin, json_dict['level'])
+                data[0]['result'] = self.__write(pin, json_dict['level'])
             elif command == 'read':
-                value = self.__read(pin)
-                client_writer.write("{!r}".format(value).rstrip('\r\n').encode('utf-8'))
+                data[0]['result'] = True
+                data[0]['answer'] = self.__read(pin)
             else:
                 self.logger.error('Invalid command: ' + command)
-        except KeyError as error:
-            self.logger.error("Could not parse JSON data: " + json_data)
+
+            client_writer.write("{!r}".format(data).rstrip('\r\n').encode('utf-8'))
+        except:
+            self.logger.error("Could not parse JSON data")
 
     def __enable(self, pin: int):
         result = None
@@ -91,6 +97,8 @@ class CHIPServer:
             self.logger.error("Chip gpio is not installed")
         if result is not 0:
             self.logger.error("Could not enable pin " + str(pin))
+            return False
+        return True
 
     def __disable(self, pin: int):
         result = None
@@ -100,6 +108,8 @@ class CHIPServer:
             self.logger.error("Chip gpio is not installed")
         if result is not 0:
             self.logger.error("Could not disable pin " + str(pin))
+            return False
+        return True
 
     def __mode(self, pin: int,  mode: str):
         result = None
@@ -109,6 +119,8 @@ class CHIPServer:
             self.logger.error("Chip gpio is not installed")
         if result is not 0:
             self.logger.error("Could not mode pin " + str(pin))
+            return False
+        return True
 
     def __write(self, pin: int, level: str):
         result = None
@@ -118,6 +130,8 @@ class CHIPServer:
             self.logger.error("Chip gpio is not installed")
         if result is not 0:
             self.logger.error("Could not write on pin " + str(pin))
+            return False
+        return True
 
     def __read(self, pin: int):
         try:
