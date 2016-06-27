@@ -1,57 +1,134 @@
+#!/usr/bin/python3
+
 import sys
 import asyncio
 import asyncio.streams
 import argparse
 import json
+import subprocess
+import logging
 
+logging.basicConfig(filename='chip-server.log',level=logging.DEBUG, format='%(asctime)s|%(name)s|%(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 
 class CHIPServer:
+
+    __CHIP_GPIO = 'chip-gpio.py'
+
     def __init__(self, port):
         self.server = None
         self.clients = {}
-        self.__port = port
+        self.port = port
+        self.logger = logging.getLogger('chip-server')
 
     def _accept_client(self, client_reader, client_writer):
-        task = asyncio.Task(self._handle_client(client_reader))
+        task = asyncio.Task(self._handle_client(client_reader, client_writer))
         self.clients[task] = (client_reader)
 
         def client_done(task):
             del self.clients[task]
 
-        task.add_done_callback(client_done)
+        task.add_done_callback(client_done, client_writer)
 
     @asyncio.coroutine
-    def _handle_client(self, client_reader):
+    def _handle_client(self, client_reader, client_writer):
+        self.logger.info('New client was accepted')
         while True:
             data = (yield from client_reader.readline()).decode("utf-8")
             if not data:
                 break
-            self.__process_command(data)
+            self.logger.info('Received data: ' + data)
+            self.__process_command(data, client_writer)
 
     def start(self, loop):
+        self.logger.info('Starting CHIP server')
         self.server = loop.run_until_complete(
             asyncio.streams.start_server(self._accept_client,
-                                         '127.0.0.1', self.__port,
+                                         '127.0.0.1', self.port,
                                          loop=loop))
 
     def stop(self, loop):
-        """
-        Stops the TCP server, i.e. closes the listening socket(s).
-
-        This method runs the loop until the server sockets are closed.
-        """
+        self.logger.info('Stoping CHIP server')
         if self.server is not None:
             self.server.close()
             loop.run_until_complete(self.server.wait_closed())
             self.server = None
 
-    def __process_command(self, data):
+    def __process_command(self, data, client_writer):
         try:
             json_data = json.loads(data)
         except json.decoder.JSONDecodeError as error:
-            print("ERROR: Could not parse message " + data)
-        print("RCV: " + data)
+            self.logger.error("Could not parse message")
+            return
 
+        command = None
+        pin = None
+        try:
+            json_dict = json_data[0]
+            command = json_dict['command']
+            pin = json_dict['pin']
+
+            if command == 'enable':
+                self.__enable(pin)
+            elif command == 'disable':
+                self.__disable(pin)
+            elif command == 'mode':
+                self.__mode(pin, json_dict['mode'])
+            elif command == 'write':
+                self.__write(pin, json_dict['level'])
+            elif command == 'read':
+                value = self.__read(pin)
+                client_writer.write("{!r}".format(value).rstrip('\r\n').encode('utf-8'))
+            else:
+                self.logger.error('Invalid command: ' + command)
+        except KeyError as error:
+            self.logger.error("Could not parse JSON data: " + json_data)
+
+    def __enable(self, pin: int):
+        result = None
+        try:
+            result = subprocess.call([CHIPServer.__CHIP_GPIO, 'enable', str(pin)])
+        except FileNotFoundError as error:
+            self.logger.error("Chip gpio is not installed")
+        if result is not 0:
+            self.logger.error("Could not enable pin " + str(pin))
+
+    def __disable(self, pin: int):
+        result = None
+        try:
+            result = subprocess.call([CHIPServer.__CHIP_GPIO, 'disable', str(pin)])
+        except FileNotFoundError as error:
+            self.logger.error("Chip gpio is not installed")
+        if result is not 0:
+            self.logger.error("Could not disable pin " + str(pin))
+
+    def __mode(self, pin: int,  mode: str):
+        result = None
+        try:
+            result = subprocess.call([CHIPServer.__CHIP_GPIO, 'mode', str(pin), '--mode={}'.format(mode)])
+        except FileNotFoundError as error:
+            self.logger.error("Chip gpio is not installed")
+        if result is not 0:
+            self.logger.error("Could not mode pin " + str(pin))
+
+    def __write(self, pin: int, level: str):
+        result = None
+        try:
+            result = subprocess.call([CHIPServer.__CHIP_GPIO, 'write', str(pin), '--level={}'.format(level)])
+        except FileNotFoundError as error:
+            self.logger.error("Chip gpio is not installed")
+        if result is not 0:
+            self.logger.error("Could not write on pin " + str(pin))
+
+    def __read(self, pin: int):
+        try:
+            proc = subprocess.Popen([CHIPServer.__CHIP_GPIO, 'read', str(pin)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, err = proc.communicate()
+            if proc.returncode is not 0:
+                self.logger.error("Could not read on pin " + str(pin))
+            self.logger.info('Read level {0} at GPIO {1}'.format(out, str(pin)))
+            return out
+        except FileNotFoundError as error:
+            self.logger.error("Chip gpio is not installed")
 
 def main():
     parser = argparse.ArgumentParser(description = 'GPIO Server.')
